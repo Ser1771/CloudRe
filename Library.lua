@@ -403,7 +403,7 @@ end)()
 local Templ = {
     Frame = { BorderSizePixel = 0 },
     TextLabel = { BorderSizePixel = 0, BackgroundTransparency = 1, FontFace = "Font", RichText = true, TextColor3 = "Text", TextSize = 13 },
-    TextButton = { AutoButtonColor = false, BorderSizePixel = 0, BackgroundTransparency = 1, FontFace = "Font", RichText = true, TextColor3 = "Text", TextSize = 13 },
+    TextButton = { AutoButtonColor = false, BorderSizePixel = 0, BackgroundTransparency = 1, FontFace = "Font", RichText = true, TextColor3 = "Text", TextSize = 13, Text = "" },
     TextBox = { BorderSizePixel = 0, FontFace = "Font", RichText = false, TextColor3 = "Text", TextSize = 13, ClearTextOnFocus = false },
     ImageLabel = { BorderSizePixel = 0, BackgroundTransparency = 1, BackgroundColor3 = Color3.new(0, 0, 0) },
     ScrollingFrame = { BorderSizePixel = 0, BackgroundTransparency = 1, ScrollBarThickness = 0 },
@@ -1207,8 +1207,8 @@ function Funcs:AddToggle(Idx, Info)
     Info = Info or {}
     local Group = self
     local Row, TextCol, Ctrl = MakeRow(Group, 38, 21, true)
-    MakeTitle(TextCol, Info.Text or "Toggle", Info.Size or 15)
-    MakeDesc(TextCol, Info.Description)
+    local TitleLbl = MakeTitle(TextCol, Info.Text or "Toggle", Info.Size or 15)
+    local DescLbl = MakeDesc(TextCol, Info.Description)
 
     local Track = New("Frame", { BackgroundColor3 = "Track", Size = UDim2.fromOffset(38, 21), Parent = Ctrl })
     Corner(Track, 99)
@@ -1221,7 +1221,8 @@ function Funcs:AddToggle(Idx, Info)
         local Dim = Toggle.Disabled and 0.55 or 0
         Anim(Track, { BackgroundColor3 = Toggle.Value and "Accent" or "Track", BackgroundTransparency = Dim }, Instant)
         Anim(Knob, { Position = Toggle.Value and UDim2.new(1, -19, 0.5, 0) or UDim2.new(0, 2, 0.5, 0), BackgroundTransparency = Dim }, Instant)
-        Anim(TextCol, { TextTransparency = Toggle.Disabled and 0.55 or 0 }, Instant)
+        if TitleLbl then Anim(TitleLbl, { TextTransparency = Dim }, Instant) end
+        if DescLbl then Anim(DescLbl, { TextTransparency = Dim }, Instant) end
     end
 
     function Toggle:SetValue(V)
