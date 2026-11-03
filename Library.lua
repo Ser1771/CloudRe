@@ -163,7 +163,7 @@ end
 
 local Library = {
     Name = "Cloudy Revolution",
-    Version = "1.3",
+    Version = "1.4",
 
     LocalPlayer = LocalPlayer,
     IsRobloxFocused = true,
@@ -256,7 +256,8 @@ local Library = {
     ShowToggleFrameInKeybinds = true,
 
     NotifyOnError = false,
-    ShowCustomCursor = true,
+    ShowCustomCursor = false, -- no custom cursor
+    ElementGlow = true, -- soft UIShadow behind element cards
     ForceCheckbox = false,
 
     CantDragForced = false,
@@ -399,7 +400,7 @@ local Templates = {
 
         CornerRadius = 24,
         NotifySide = "Right",
-        ShowCustomCursor = true,
+        ShowCustomCursor = false,
 
         Font = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium),
         ToggleKeybind = Enum.KeyCode.RightControl,
@@ -634,6 +635,9 @@ local Sizes = {
 local SideIndex = {
     left = 1,
     right = 2,
+    full = 3, -- single (full width) groupbox
+    single = 3,
+    both = 3,
 }
 
 --// Scheme Functions \\--
@@ -2438,14 +2442,14 @@ local ShadowSupported = pcall(function()
     Instance.new("UIShadow"):Destroy()
 end)
 
-function Library:AddShadow(Frame: GuiObject, Blur: number?, Offset: number?, Transparency: number?)
+function Library:AddShadow(Frame: GuiObject, Blur: number?, Offset: number?, Transparency: number?, ColorKey: string?)
     if not ShadowSupported then
         return nil
     end
 
     local Success, Shadow = pcall(New, "UIShadow", {
         BlurRadius = UDim.new(0, Blur or 18),
-        Color = "DarkColor",
+        Color = ColorKey or "DarkColor",
         Offset = UDim2.fromOffset(0, Offset or 6),
         Transparency = Transparency or 0.5,
         ZIndex = -1,
@@ -2474,6 +2478,136 @@ function Library:AddOutline(Frame: GuiObject, Blur: number?, Offset: number?, Tr
     end
 
     return OutlineStroke, Shadow
+end
+
+--// Row card: title + auto-wrapping description (no more stacked text) \\--
+function Library:MakeRowCard(Parent: GuiObject, Config)
+    local MinHeight = Config.MinHeight or 46
+    local RightInset = Config.RightInset or 16
+    local Inset = 16 + RightInset
+
+    local Properties = {
+        BackgroundColor3 = "MainColor",
+        BackgroundTransparency = 0.25,
+        Size = UDim2.new(1, 0, 0, MinHeight),
+        Visible = Config.Visible ~= false,
+        Parent = Parent,
+    }
+    if Config.Button then
+        Properties.Text = ""
+        Properties.Active = Config.Active ~= false
+    end
+
+    local Card = New(Config.Button and "TextButton" or "Frame", Properties)
+    table.insert(
+        Library.Corners,
+        New("UICorner", {
+            CornerRadius = UDim.new(0, Library.CornerRadius / 2),
+            Parent = Card,
+        })
+    )
+    local Stroke = New("UIStroke", {
+        Color = "OutlineColor",
+        Transparency = 0.45,
+        Parent = Card,
+    })
+    local Shadow = Library.ElementGlow and Library:AddShadow(Card, 8, 3, 0.7) or nil
+
+    local Label = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(16, 0),
+        Size = UDim2.new(1, -Inset, 1, 0),
+        Text = Config.Text or "",
+        TextSize = 16,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = Card,
+    })
+    if Config.Addons then
+        New("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            HorizontalAlignment = Enum.HorizontalAlignment.Right,
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            Padding = UDim.new(0, 6),
+            Parent = Label,
+        })
+    end
+
+    local HasDescription = typeof(Config.Description) == "string" and Config.Description ~= ""
+    local Description = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(16, 31),
+        Size = UDim2.new(1, -Inset, 0, 14),
+        Text = HasDescription and Config.Description or "",
+        TextSize = 12,
+        TextTransparency = 0.55,
+        TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        Visible = HasDescription,
+        Parent = Card,
+    })
+
+    local Row = {
+        Card = Card,
+        Label = Label,
+        Description = Description,
+        Stroke = Stroke,
+        Shadow = Shadow,
+    }
+
+    local LastKey
+    local Busy = false
+    function Row.Relayout()
+        if Busy or not Card.Parent then
+            return
+        end
+
+        local Width = (Card.AbsoluteSize.X / Library.DPIScale) - Inset
+        local Key = Description.Visible and (tostring(math.floor(Width)) .. Description.Text) or "none"
+        if Key == LastKey then
+            return
+        end
+        LastKey = Key
+        Busy = true
+
+        if Description.Visible then
+            local Height = 14
+            if Width > 8 then
+                local _, H = Library:GetTextBounds(Description.Text, Description.FontFace, Description.TextSize, Width)
+                Height = H
+            end
+
+            Label.Position = UDim2.fromOffset(16, 10)
+            Label.Size = UDim2.new(1, -Inset, 0, 20)
+            Description.Position = UDim2.fromOffset(16, 31)
+            Description.Size = UDim2.new(1, -Inset, 0, Height)
+            Card.Size = UDim2.new(1, 0, 0, math.max(MinHeight, 31 + Height + 12))
+        else
+            Label.Position = UDim2.fromOffset(16, 0)
+            Label.Size = UDim2.new(1, -Inset, 1, 0)
+            Card.Size = UDim2.new(1, 0, 0, MinHeight)
+        end
+
+        Busy = false
+    end
+
+    function Row.SetDescription(Text)
+        local Has = typeof(Text) == "string" and Text ~= ""
+        Description.Text = Has and Text or ""
+        Description.Visible = Has
+        LastKey = nil
+        Row.Relayout()
+    end
+
+    function Row.SetText(Text)
+        Label.Text = Text or ""
+    end
+
+    Card:GetPropertyChangedSignal("AbsoluteSize"):Connect(Row.Relayout)
+    task.defer(Row.Relayout)
+
+    return Row
 end
 
 function Library:AddBlank(Frame: GuiObject, Size: UDim2)
@@ -7311,59 +7445,17 @@ do
             Parent = Groupbox,
         }
 
-        local HasDescription = typeof(Info.Description) == "string" and Info.Description ~= ""
-
-        local Button = New("TextButton", {
+        local Row = Library:MakeRowCard(Container, {
+            Button = true,
             Active = not Toggle.Disabled,
-            BackgroundColor3 = "MainColor",
-            BackgroundTransparency = 0.25,
-            Size = UDim2.new(1, 0, 0, HasDescription and 58 or 46),
-            Text = "",
-            Visible = Toggle.Visible,
-            Parent = Container,
-        })
-        table.insert(
-            Library.Corners,
-            New("UICorner", {
-                CornerRadius = UDim.new(0, Library.CornerRadius / 2),
-                Parent = Button,
-            })
-        )
-        local ButtonStroke = New("UIStroke", {
-            Color = "OutlineColor",
-            Transparency = 0.45,
-            Parent = Button,
-        })
-
-        local Label = New("TextLabel", {
-            BackgroundTransparency = 1,
-            Position = UDim2.fromOffset(16, HasDescription and 9 or 0),
-            Size = UDim2.new(1, -84, 0, HasDescription and 20 or 46),
             Text = Toggle.Text,
-            TextSize = 16,
-            TextTransparency = 0.4,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = Button,
+            Description = Info.Description,
+            RightInset = 70,
+            Addons = true,
+            Visible = Toggle.Visible,
         })
-
-        New("UIListLayout", {
-            FillDirection = Enum.FillDirection.Horizontal,
-            HorizontalAlignment = Enum.HorizontalAlignment.Right,
-            Padding = UDim.new(0, 6),
-            Parent = Label,
-        })
-
-        local DescriptionLabel = New("TextLabel", {
-            BackgroundTransparency = 1,
-            Position = UDim2.fromOffset(16, 30),
-            Size = UDim2.new(1, -84, 0, 16),
-            Text = HasDescription and Info.Description or "",
-            TextSize = 12,
-            TextTransparency = 0.55,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Visible = HasDescription,
-            Parent = Button,
-        })
+        local Button, Label, ButtonStroke = Row.Card, Row.Label, Row.Stroke
+        Label.TextTransparency = 0.4
 
         local Switch = New("Frame", {
             AnchorPoint = Vector2.new(1, 0.5),
@@ -7430,6 +7522,14 @@ do
                 Button.BackgroundColor3 = Library.Registry[Button].BackgroundColor3()
                 Button.BackgroundTransparency = Toggle.Value and 0 or 0.25
                 ButtonStroke.Color = Toggle.Value and Library.Scheme.AccentColor:Lerp(Library.Scheme.OutlineColor, 0.6) or Library.Scheme.OutlineColor
+
+                if Row.Shadow then
+                    Library.Registry[Row.Shadow].Color = function()
+                        return Toggle.Value and Library.Scheme.AccentColor or Library.Scheme.DarkColor
+                    end
+                    Row.Shadow.Color = Library.Registry[Row.Shadow].Color()
+                    Row.Shadow.Transparency = Toggle.Value and 0.5 or 0.7
+                end
             end
             Library.Registry[SwitchStroke].Color = Toggle.Value and "AccentColor" or "OutlineColor"
 
@@ -7519,15 +7619,8 @@ do
         end
 
         function Toggle:SetDescription(Text: string?)
-            local Has = typeof(Text) == "string" and Text ~= ""
             Toggle.Description = Text
-
-            DescriptionLabel.Text = Has and Text or ""
-            DescriptionLabel.Visible = Has
-
-            Button.Size = UDim2.new(1, 0, 0, Has and 58 or 46)
-            Label.Position = UDim2.fromOffset(16, Has and 9 or 0)
-            Label.Size = UDim2.new(1, -84, 0, Has and 20 or 46)
+            Row.SetDescription(Text)
             Groupbox:Resize()
         end
 
@@ -7644,50 +7737,13 @@ do
             Type = "Input",
         }
 
-        local HasDescription = typeof(Info.Description) == "string" and Info.Description ~= ""
-
-        local Holder = New("Frame", {
-            BackgroundColor3 = "MainColor",
-            BackgroundTransparency = 0.25,
-            Size = UDim2.new(1, 0, 0, HasDescription and 58 or 46),
-            Visible = Input.Visible,
-            Parent = Container,
-        })
-        table.insert(
-            Library.Corners,
-            New("UICorner", {
-                CornerRadius = UDim.new(0, Library.CornerRadius / 2),
-                Parent = Holder,
-            })
-        )
-        New("UIStroke", {
-            Color = "OutlineColor",
-            Transparency = 0.45,
-            Parent = Holder,
-        })
-
-        local Label = New("TextLabel", {
-            BackgroundTransparency = 1,
-            Position = UDim2.fromOffset(16, HasDescription and 9 or 0),
-            Size = UDim2.new(1, -170, 0, HasDescription and 20 or 46),
+        local Row = Library:MakeRowCard(Container, {
             Text = Input.Text,
-            TextSize = 16,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = Holder,
+            Description = Info.Description,
+            RightInset = 150,
+            Visible = Input.Visible,
         })
-
-        if HasDescription then
-            New("TextLabel", {
-                BackgroundTransparency = 1,
-                Position = UDim2.fromOffset(16, 30),
-                Size = UDim2.new(1, -170, 0, 16),
-                Text = Info.Description,
-                TextSize = 12,
-                TextTransparency = 0.55,
-                TextXAlignment = Enum.TextXAlignment.Left,
-                Parent = Holder,
-            })
-        end
+        local Holder, Label = Row.Card, Row.Label
 
         local Box = New("TextBox", {
             AnchorPoint = Vector2.new(1, 0.5),
@@ -7797,6 +7853,11 @@ do
         function Input:SetText(Text: string)
             Input.Text = Text
             Label.Text = Text
+        end
+
+        function Input:SetDescription(Text: string?)
+            Input.Description = Text
+            Row.SetDescription(Text)
         end
 
         if Input.Finished then
@@ -7930,53 +7991,25 @@ do
         }
 
         local Compact = Info.Compact == true
-        local HasDescription = not Compact and typeof(Info.Description) == "string" and Info.Description ~= ""
-
-        local Holder = New("Frame", {
-            BackgroundColor3 = "MainColor",
-            BackgroundTransparency = Compact and 1 or 0.25,
-            Size = UDim2.new(1, 0, 0, Compact and 22 or (HasDescription and 58 or 46)),
-            Visible = Slider.Visible,
-            Parent = Container,
-        })
-
+        local Row
+        local Holder
         local SliderLabel
-        if not Compact then
-            table.insert(
-                Library.Corners,
-                New("UICorner", {
-                    CornerRadius = UDim.new(0, Library.CornerRadius / 2),
-                    Parent = Holder,
-                })
-            )
-            New("UIStroke", {
-                Color = "OutlineColor",
-                Transparency = 0.45,
-                Parent = Holder,
-            })
 
-            SliderLabel = New("TextLabel", {
+        if Compact then
+            Holder = New("Frame", {
                 BackgroundTransparency = 1,
-                Position = UDim2.fromOffset(16, HasDescription and 9 or 0),
-                Size = UDim2.new(1, -200, 0, HasDescription and 20 or 46),
-                Text = Slider.Text,
-                TextSize = 16,
-                TextXAlignment = Enum.TextXAlignment.Left,
-                Parent = Holder,
+                Size = UDim2.new(1, 0, 0, 22),
+                Visible = Slider.Visible,
+                Parent = Container,
             })
-
-            if HasDescription then
-                New("TextLabel", {
-                    BackgroundTransparency = 1,
-                    Position = UDim2.fromOffset(16, 30),
-                    Size = UDim2.new(1, -200, 0, 16),
-                    Text = Info.Description,
-                    TextSize = 12,
-                    TextTransparency = 0.55,
-                    TextXAlignment = Enum.TextXAlignment.Left,
-                    Parent = Holder,
-                })
-            end
+        else
+            Row = Library:MakeRowCard(Container, {
+                Text = Slider.Text,
+                Description = Info.Description,
+                RightInset = 190,
+                Visible = Slider.Visible,
+            })
+            Holder, SliderLabel = Row.Card, Row.Label
         end
 
         local Bar = New("TextButton", {
@@ -8183,6 +8216,13 @@ do
             Slider:Display()
         end
 
+        function Slider:SetDescription(Text: string?)
+            Slider.Description = Text
+            if Row then
+                Row.SetDescription(Text)
+            end
+        end
+
         function Slider:SetPrefix(Prefix: string)
             Slider.Prefix = Prefix
             Slider:Display()
@@ -8302,6 +8342,10 @@ do
                     Side.ScrollingEnabled = false
                 end
             end
+            local InnerScroller = Container:IsA("ScrollingFrame") and Container or Container:FindFirstAncestorWhichIsA("ScrollingFrame")
+            if InnerScroller then
+                InnerScroller.ScrollingEnabled = false
+            end
 
             if Library.ActiveLoading and Library.ActiveLoading.Sidebar then
                 Library.ActiveLoading.Sidebar.Container.ScrollingEnabled = false
@@ -8326,6 +8370,9 @@ do
                 for _, Side in Library.ActiveTab.Sides do
                     Side.ScrollingEnabled = true
                 end
+            end
+            if InnerScroller then
+                InnerScroller.ScrollingEnabled = true
             end
 
             if Library.ActiveLoading and Library.ActiveLoading.Sidebar then
@@ -8399,6 +8446,7 @@ do
             Destroyed = false,
 
             Text = typeof(Info.Text) == "string" and Info.Text or nil,
+            Description = Info.Description,
 
             Value = Info.Multi and {} or nil,
             Values = Info.Values,
@@ -8426,29 +8474,44 @@ do
             Type = "Dropdown",
         }
 
-        local Holder = New("Frame", {
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, Dropdown.Text and 39 or 21),
-            Visible = Dropdown.Visible,
-            Parent = Container,
-        })
+        local HasText = typeof(Dropdown.Text) == "string" and Dropdown.Text ~= ""
+        local Row
+        local Holder
+        local Label
 
-        local Label = New("TextLabel", {
-            BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 14),
-            Text = Dropdown.Text,
-            TextSize = 14,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Visible = not not Info.Text,
-            ZIndex = 3,
-            Parent = Holder,
-        })
+        if HasText then
+            Row = Library:MakeRowCard(Container, {
+                Text = Dropdown.Text,
+                Description = Info.Description,
+                RightInset = 196,
+                MinHeight = 52,
+                Visible = Dropdown.Visible,
+            })
+            Holder, Label = Row.Card, Row.Label
+        else
+            Holder = New("Frame", {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 30),
+                Visible = Dropdown.Visible,
+                Parent = Container,
+            })
+            Label = New("TextLabel", {
+                BackgroundTransparency = 1,
+                Size = UDim2.fromOffset(0, 0),
+                Text = "",
+                Visible = false,
+                Parent = Holder,
+            })
+        end
+
+        Dropdown.Card = Row
+        Dropdown.IsCard = HasText
 
         local DisplayContainer = New("TextButton", {
-            AnchorPoint = Vector2.new(0, 1),
-            BackgroundColor3 = "MainColor",
-            Position = UDim2.fromScale(0, 1),
-            Size = UDim2.new(1, 0, 0, 21),
+            AnchorPoint = HasText and Vector2.new(1, 0.5) or Vector2.new(0, 0.5),
+            BackgroundColor3 = HasText and "BackgroundColor" or "MainColor",
+            Position = HasText and UDim2.new(1, -14, 0.5, 0) or UDim2.fromScale(0, 0.5),
+            Size = HasText and UDim2.fromOffset(176, 32) or UDim2.new(1, 0, 0, 30),
             Text = "",
             TextTransparency = 1,
             ZIndex = 2,
@@ -8476,7 +8539,8 @@ do
 
         local DisplayImage = New("ImageLabel", {
             BackgroundTransparency = 1,
-            Position = UDim2.fromOffset(-4, 3),
+            AnchorPoint = Vector2.new(0, 0.5),
+            Position = UDim2.new(0, -4, 0.5, 0),
             Size = UDim2.fromOffset(16, 16),
             Image = "",
             ImageTransparency = 1,
@@ -8487,7 +8551,7 @@ do
         local DisplayButton = New("TextButton", {
             Active = not Dropdown.Disabled,
             BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 21),
+            Size = UDim2.fromScale(1, 1),
             Text = "---",
             TextSize = 14,
             TextXAlignment = Enum.TextXAlignment.Left,
@@ -8570,14 +8634,27 @@ do
             return ValueImage
         end
 
+        --// Menu is wider than the pill when the dropdown lives inside a card (right-aligned) \\--
+        local function GetMenuWidth()
+            local Width = DisplayContainer.AbsoluteSize.X / Library.DPIScale
+            if Dropdown.IsCard then
+                Width = math.max(Width, Info.MenuWidth or 236)
+            end
+
+            return Width
+        end
+
         local MenuTable
         MenuTable = Library:AddContextMenu(
             DisplayContainer,
             function()
-                return UDim2.fromOffset((DisplayContainer.AbsoluteSize.X / Library.DPIScale), 0)
+                return UDim2.fromOffset(GetMenuWidth(), 0)
             end,
             function()
-                return { 0.5, DisplayContainer.AbsoluteSize.Y + 1.5 }
+                return {
+                    DisplayContainer.AbsoluteSize.X - (GetMenuWidth() * Library.DPIScale) + 0.5,
+                    DisplayContainer.AbsoluteSize.Y + (Dropdown.IsCard and 6 or 1.5),
+                }
             end,
             2,
             function(Active: boolean)
@@ -8594,15 +8671,17 @@ do
                 local Half = UDim.new(0, Library.CornerRadius / 2)
                 local Zero = UDim.new(0, 0)
 
+                local Attached = not Dropdown.IsCard
+
                 DropdownCorner.TopLeftRadius = Half
                 DropdownCorner.TopRightRadius = Half
-                DropdownCorner.BottomRightRadius = Active and Zero or Half
-                DropdownCorner.BottomLeftRadius = Active and Zero or Half
+                DropdownCorner.BottomRightRadius = (Active and Attached) and Zero or Half
+                DropdownCorner.BottomLeftRadius = (Active and Attached) and Zero or Half
 
                 local MenuCorner = MenuTable and MenuTable.Corner
                 if MenuCorner then
-                    MenuCorner.TopLeftRadius = Zero
-                    MenuCorner.TopRightRadius = Zero
+                    MenuCorner.TopLeftRadius = Attached and Zero or Half
+                    MenuCorner.TopRightRadius = Attached and Zero or Half
                     MenuCorner.BottomRightRadius = Half
                     MenuCorner.BottomLeftRadius = Half
                 end
@@ -8613,7 +8692,7 @@ do
         )
         Dropdown.Menu = MenuTable
 
-        local ItemHeight = 21
+        local ItemHeight = 28
         local PoolSize = math.max(1, Info.MaxVisibleDropdownItems + 2)
         local Pool = {}
         local FilteredEntries = {}
@@ -8625,7 +8704,7 @@ do
             MenuTable.Menu.CanvasSize = UDim2.fromOffset(0, ItemCount * ItemHeight)
 
             MenuTable:SetSize(function()
-                return UDim2.fromOffset((DisplayContainer.AbsoluteSize.X / Library.DPIScale), Y)
+                return UDim2.fromOffset(GetMenuWidth(), Y)
             end)
         end
 
@@ -8693,7 +8772,7 @@ do
                 DisplayImage.ImageTransparency = 1
             end
 
-            DisplayButton.Size = ValueImage and UDim2.new(1, -8, 0, 21) or UDim2.new(1, 0, 0, 21)
+            DisplayButton.Size = ValueImage and UDim2.new(1, -8, 1, 0) or UDim2.new(1, 0, 1, 0)
             DisplayButton.Position = ValueImage and UDim2.fromOffset(14, 0) or UDim2.fromOffset(0, 0)
         end
 
@@ -8985,7 +9064,7 @@ do
                 Image = "",
                 ImageTransparency = 0.5,
                 Size = UDim2.fromOffset(16, 16),
-                Position = UDim2.fromOffset(4, 3),
+                Position = UDim2.fromOffset(6, 6),
                 Visible = false,
                 Parent = Container,
             })
@@ -9370,10 +9449,16 @@ do
 
         function Dropdown:SetText(Text: string)
             Dropdown.Text = Text
-            Holder.Size = UDim2.new(1, 0, 0, Text and 39 or 21)
+            if Row then
+                Row.SetText(Text)
+            end
+        end
 
-            Label.Text = Text and Text or ""
-            Label.Visible = not not Text
+        function Dropdown:SetDescription(Text: string?)
+            Dropdown.Description = Text
+            if Row then
+                Row.SetDescription(Text)
+            end
         end
 
         function Dropdown:SetDragSelect(Value: boolean)
@@ -10204,6 +10289,16 @@ do
         return Passthrough
     end
 
+    --// Nested groupbox: Groupbox:AddGroupbox({ Name = "...", Side = "Left" | "Right" | nil }) \\--
+    function Funcs:AddGroupbox(Info)
+        if self.Destroyed then return nil end
+
+        local Tab = self.Tab
+        assert(Tab and Tab._BuildGroupbox, "Nested groupboxes can only be created inside a tab groupbox.")
+
+        return Tab._BuildGroupbox(self, Info)
+    end
+
     function Funcs:AddDependencyBox()
         if self.Destroyed then return nil end
 
@@ -10233,6 +10328,10 @@ do
 
             Visible = false,
             Dependencies = {},
+
+            IsDepbox = true,
+            Tab = Groupbox.Tab,
+            Page = Groupbox.Page,
 
             Holder = DepboxContainer,
             Container = DepboxContainer,
@@ -11253,8 +11352,8 @@ function Library:CreateWindow(WindowInfo)
         RightWrapper = New("Frame", {
             AnchorPoint = Vector2.new(1, 0.5),
             BackgroundTransparency = 1,
-            Position = UDim2.new(1, -101, 0.5, 0),
-            Size = UDim2.new(1, -InitialLeftWidth - 109 - 1, 1, -16),
+            Position = UDim2.new(1, -143, 0.5, 0),
+            Size = UDim2.new(1, -InitialLeftWidth - 151 - 1, 1, -16),
             Parent = TopBar,
         })
 
@@ -11267,7 +11366,7 @@ function Library:CreateWindow(WindowInfo)
         })
 
         CurrentTabInfo = New("Frame", {
-            Size = UDim2.fromScale(WindowInfo.DisableSearch and 1 or 0.5, 1),
+            Size = UDim2.fromScale(1, 1),
             Visible = false,
             BackgroundTransparency = 1,
             Parent = RightWrapper,
@@ -11320,7 +11419,7 @@ function Library:CreateWindow(WindowInfo)
             PlaceholderText = "Search",
             Size = WindowInfo.SearchbarSize,
             TextScaled = true,
-            Visible = not (WindowInfo.DisableSearch or false),
+            Visible = false, -- replaced by the search panel button
             Parent = RightWrapper,
         })
         New("UIFlexItem", {
@@ -11438,6 +11537,443 @@ function Library:CreateWindow(WindowInfo)
         CreateControl(-12, CloseIcon, function()
             Library:Toggle(false)
         end)
+
+        local SearchButton = CreateControl(-96, Library:GetIcon("search"), function()
+            Library.SearchPanel:Toggle()
+        end)
+
+        --// Search panel: Tab > Page > Groupbox > Element : Type \\--
+        do
+            local SearchPanel = { Active = false }
+            Library.SearchPanel = SearchPanel
+
+            local Panel = New("Frame", {
+                AnchorPoint = Vector2.new(1, 0),
+                BackgroundColor3 = "BackgroundColor",
+                Position = UDim2.new(1, -12, 0, 56),
+                Size = UDim2.fromOffset(420, 66),
+                Visible = false,
+                ZIndex = 100,
+                Parent = MainFrame,
+            })
+            table.insert(
+                Library.Corners,
+                New("UICorner", {
+                    CornerRadius = UDim.new(0, Library.CornerRadius / 2),
+                    Parent = Panel,
+                })
+            )
+            Library:AddOutline(Panel, 30, 10, 0.35)
+
+            local InputHolder = New("Frame", {
+                BackgroundColor3 = "MainColor",
+                Position = UDim2.fromOffset(10, 10),
+                Size = UDim2.new(1, -20, 0, 38),
+                Parent = Panel,
+            })
+            table.insert(
+                Library.Corners,
+                New("UICorner", {
+                    CornerRadius = UDim.new(0, Library.CornerRadius / 2),
+                    Parent = InputHolder,
+                })
+            )
+            local InputStroke = New("UIStroke", {
+                Color = "OutlineColor",
+                Parent = InputHolder,
+            })
+
+            local SearchIcon = Library:GetIcon("search")
+            if SearchIcon then
+                local SearchIconImage = New("ImageLabel", {
+                    AnchorPoint = Vector2.new(0, 0.5),
+                    ImageColor3 = "FontColor",
+                    ImageTransparency = 0.5,
+                    Position = UDim2.new(0, 12, 0.5, 0),
+                    Size = UDim2.fromOffset(16, 16),
+                    Parent = InputHolder,
+                })
+                Library:ApplyLucideIcon(SearchIconImage, SearchIcon)
+            end
+
+            local SearchInput = New("TextBox", {
+                BackgroundTransparency = 1,
+                ClearTextOnFocus = false,
+                PlaceholderText = "Search tabs, pages, groupboxes, elements...",
+                Position = UDim2.fromOffset(36, 0),
+                Size = UDim2.new(1, -46, 1, 0),
+                Text = "",
+                TextSize = 14,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                Parent = InputHolder,
+            })
+            SearchInput.Focused:Connect(function()
+                TweenService:Create(InputStroke, Library.TweenInfo, { Color = Library.Scheme.AccentColor }):Play()
+            end)
+            SearchInput.FocusLost:Connect(function()
+                TweenService:Create(InputStroke, Library.TweenInfo, { Color = Library.Scheme.OutlineColor }):Play()
+            end)
+
+            local ResultsFrame = New("ScrollingFrame", {
+                AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                BackgroundTransparency = 1,
+                CanvasSize = UDim2.fromScale(0, 0),
+                Position = UDim2.fromOffset(10, 56),
+                ScrollBarImageColor3 = "OutlineColor",
+                ScrollBarThickness = 2,
+                Size = UDim2.new(1, -20, 0, 28),
+                Parent = Panel,
+            })
+            New("UIListLayout", {
+                Padding = UDim.new(0, 4),
+                Parent = ResultsFrame,
+            })
+
+            local EmptyLabel = New("TextLabel", {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 24),
+                Text = "Type to search",
+                TextSize = 13,
+                TextTransparency = 0.5,
+                Parent = ResultsFrame,
+            })
+
+            local function Escape(Text)
+                return (tostring(Text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+            end
+
+            --// Navigate to a result: switch tab / page / sub-tab, expand groupboxes, scroll + flash \--
+            local function Reveal(Context, Target)
+                if Context.Tab and Context.Tab.Show then
+                    Context.Tab:Show()
+                end
+                if Context.Page then
+                    Context.Page:Show()
+                end
+                if Context.SubTab then
+                    Context.SubTab:Show()
+                end
+
+                local Box = Context.Groupbox
+                while Box do
+                    if Box.Collapsed and Box.SetCollapsed then
+                        Box:SetCollapsed(false)
+                    end
+                    Box = Box.ParentBox
+                end
+
+                if not Target then
+                    return
+                end
+
+                task.spawn(function()
+                    local Animated = Library.Animations and Library.Animations.TabSwitch
+                    task.wait(Animated and (Library.TabTransitionInfo.Time + 0.05) or 0.08)
+
+                    if not Target.Parent then
+                        return
+                    end
+
+                    local Inner = Target.Parent
+                    local ScrolledInner = false
+                    while Inner do
+                        if Inner:IsA("ScrollingFrame") and Inner.Name ~= "CloudyColumn" and Inner.ScrollBarThickness > 0 then
+                            local InnerY = Target.AbsolutePosition.Y - Inner.AbsolutePosition.Y + Inner.CanvasPosition.Y
+                            Inner.CanvasPosition = Vector2.new(0, math.max(0, InnerY - 12 * Library.DPIScale))
+                            ScrolledInner = true
+                        end
+                        Inner = Inner.Parent
+                    end
+                    if ScrolledInner then
+                        RunService.RenderStepped:Wait()
+                    end
+
+                    local Scroller = Target.Parent
+                    while Scroller and not (Scroller:IsA("ScrollingFrame") and Scroller.Name == "CloudyColumn") do
+                        Scroller = Scroller.Parent
+                    end
+
+                    if Scroller then
+                        local Y = Target.AbsolutePosition.Y - Scroller.AbsolutePosition.Y + Scroller.CanvasPosition.Y
+                        Scroller.CanvasPosition = Vector2.new(0, math.max(0, Y - 24 * Library.DPIScale))
+                    end
+
+                    local Flash = New("UIStroke", {
+                        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+                        Color = "AccentColor",
+                        Thickness = 2,
+                        Parent = Target,
+                    })
+                    TweenService:Create(Flash, TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                        Transparency = 1,
+                    }):Play()
+                    task.delay(1.3, function()
+                        Flash:Destroy()
+                    end)
+                end)
+            end
+
+            local function Collect(Query)
+                local Search = NormalizeSearch(Query:lower())
+                local Found = {}
+                if Trim(Search) == "" then
+                    return Found
+                end
+
+                local function Score(Text, Description, Tooltip)
+                    local Value = FuzzyMatchScore(Text, Search)
+                    if Value > 0 then
+                        return Value
+                    end
+                    if TryFuzzyMatch(Description, Search) or TryFuzzyMatch(Tooltip, Search) then
+                        return 1
+                    end
+
+                    return 0
+                end
+
+                local function Push(Value, Segments, Name, Type, Go)
+                    table.insert(Found, { Score = Value, Segments = Segments, Name = Name, Type = Type, Go = Go })
+                end
+
+                local function ScanElements(Elements, Boxes, Segments, Context)
+                    for _, Element in Elements do
+                        if Element.Type == "Divider" or Element.Destroyed or typeof(Element.Text) ~= "string" then
+                            continue
+                        end
+
+                        local Value = Score(Element.Text, Element.Description, Element.Tooltip)
+                        if Value > 0 then
+                            Push(Value, Segments, Element.Text, Element.Type or "Element", function()
+                                Reveal(Context, Element.Holder)
+                            end)
+                        end
+
+                        local Sub = Element.SubButton
+                        if Sub and typeof(Sub.Text) == "string" then
+                            local SubValue = Score(Sub.Text, nil, Sub.Tooltip)
+                            if SubValue > 0 then
+                                Push(SubValue, Segments, Sub.Text, "Button", function()
+                                    Reveal(Context, Element.Holder)
+                                end)
+                            end
+                        end
+                    end
+
+                    for _, Box in Boxes or {} do
+                        if Box.Visible ~= false and not Box.Destroyed then
+                            ScanElements(Box.Elements, Box.DependencyBoxes, Segments, Context)
+                        end
+                    end
+                end
+
+                for _, Tab in Library.Tabs do
+                    if typeof(Tab) ~= "table" or Tab.IsKeyTab or Tab.Destroyed then
+                        continue
+                    end
+
+                    local TabName = tostring(Tab.Name)
+                    local Value = Score(Tab.Name, Tab.Description, Tab.Tooltip)
+                    if Value > 0 then
+                        Push(Value, {}, TabName, "Tab", function()
+                            Reveal({ Tab = Tab })
+                        end)
+                    end
+
+                    for _, Page in Tab.Pages or {} do
+                        Value = Score(Page.Name)
+                        if Value > 0 then
+                            Push(Value, { TabName }, Page.Name, "Page", function()
+                                Reveal({ Tab = Tab, Page = Page })
+                            end)
+                        end
+                    end
+
+                    for _, Groupbox in Tab.Groupboxes do
+                        if Groupbox.Destroyed or Groupbox.Visible == false then
+                            continue
+                        end
+
+                        local Segments = { TabName }
+                        if Groupbox.Page then
+                            table.insert(Segments, Groupbox.Page.Name)
+                        end
+
+                        local Chain = {}
+                        local Parent = Groupbox.ParentBox
+                        while Parent do
+                            if Parent.Name then
+                                table.insert(Chain, 1, tostring(Parent.Name))
+                            end
+                            Parent = Parent.ParentBox
+                        end
+                        for _, Name in Chain do
+                            table.insert(Segments, Name)
+                        end
+
+                        local Context = { Tab = Tab, Page = Groupbox.Page, Groupbox = Groupbox }
+
+                        Value = Score(Groupbox.Name, Groupbox.Description)
+                        if Value > 0 then
+                            Push(Value, Segments, Groupbox.Name, "Groupbox", function()
+                                Reveal(Context, Groupbox.Holder)
+                            end)
+                        end
+
+                        local Inner = table.clone(Segments)
+                        table.insert(Inner, tostring(Groupbox.Name))
+                        ScanElements(Groupbox.Elements, Groupbox.DependencyBoxes, Inner, Context)
+                    end
+
+                    for _, Tabbox in Tab.Tabboxes do
+                        if Tabbox.Destroyed then
+                            continue
+                        end
+
+                        local Segments = { TabName }
+                        if Tabbox.Page then
+                            table.insert(Segments, Tabbox.Page.Name)
+                        end
+
+                        for SubName, SubTab in Tabbox.Tabs do
+                            local Inner = table.clone(Segments)
+                            table.insert(Inner, tostring(SubName))
+                            ScanElements(SubTab.Elements, SubTab.DependencyBoxes, Inner, {
+                                Tab = Tab,
+                                Page = Tabbox.Page,
+                                SubTab = SubTab,
+                            })
+                        end
+                    end
+                end
+
+                table.sort(Found, function(A, B)
+                    if A.Score ~= B.Score then
+                        return A.Score > B.Score
+                    end
+
+                    return tostring(A.Name) < tostring(B.Name)
+                end)
+
+                for Index = #Found, 41, -1 do
+                    Found[Index] = nil
+                end
+
+                return Found
+            end
+
+            local RowButtons = {}
+            local function Refresh()
+                for _, Row in RowButtons do
+                    Row:Destroy()
+                end
+                table.clear(RowButtons)
+
+                local Query = SearchInput.Text
+                local Found = Collect(Query)
+
+                EmptyLabel.Visible = #Found == 0
+                EmptyLabel.Text = Trim(Query) == "" and "Type to search" or "No results"
+
+                for Index, Result in Found do
+                    local Path = table.concat(Result.Segments, " > ")
+                    local Text
+                    if Path ~= "" then
+                        Text = string.format(
+                            '<font transparency="0.55">%s &gt;</font> %s <font transparency="0.55">: %s</font>',
+                            Escape(Path),
+                            Escape(Result.Name),
+                            Escape(Result.Type)
+                        )
+                    else
+                        Text = string.format('%s <font transparency="0.55">: %s</font>', Escape(Result.Name), Escape(Result.Type))
+                    end
+
+                    local Row = New("TextButton", {
+                        BackgroundColor3 = "MainColor",
+                        BackgroundTransparency = 0.35,
+                        LayoutOrder = Index,
+                        Size = UDim2.new(1, 0, 0, 34),
+                        Text = Text,
+                        TextSize = 13,
+                        TextTruncate = Enum.TextTruncate.AtEnd,
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        Parent = ResultsFrame,
+                    })
+                    table.insert(
+                        Library.Corners,
+                        New("UICorner", {
+                            CornerRadius = UDim.new(0, Library.CornerRadius / 2),
+                            Parent = Row,
+                        })
+                    )
+                    New("UIPadding", {
+                        PaddingLeft = UDim.new(0, 12),
+                        PaddingRight = UDim.new(0, 12),
+                        Parent = Row,
+                    })
+
+                    Row.MouseEnter:Connect(function()
+                        TweenService:Create(Row, Library.TweenInfo, { BackgroundTransparency = 0 }):Play()
+                    end)
+                    Row.MouseLeave:Connect(function()
+                        TweenService:Create(Row, Library.TweenInfo, { BackgroundTransparency = 0.35 }):Play()
+                    end)
+                    Row.MouseButton1Click:Connect(function()
+                        SearchPanel:Close()
+                        Library:SafeCallback(Result.Go)
+                    end)
+
+                    table.insert(RowButtons, Row)
+                end
+
+                local ListHeight = #Found == 0 and 28 or (math.min(#Found, 8) * 38 - 4)
+                ResultsFrame.Size = UDim2.new(1, -20, 0, ListHeight)
+                Panel.Size = UDim2.fromOffset(420, 56 + ListHeight + 12)
+            end
+
+            SearchInput:GetPropertyChangedSignal("Text"):Connect(Refresh)
+
+            function SearchPanel:Open()
+                SearchPanel.Active = true
+                Panel.Visible = true
+                Refresh()
+                task.defer(function()
+                    if SearchPanel.Active then
+                        SearchInput:CaptureFocus()
+                    end
+                end)
+            end
+
+            function SearchPanel:Close()
+                SearchPanel.Active = false
+                Panel.Visible = false
+                if SearchInput:IsFocused() then
+                    SearchInput:ReleaseFocus()
+                end
+            end
+
+            function SearchPanel:Toggle()
+                if SearchPanel.Active then
+                    SearchPanel:Close()
+                else
+                    SearchPanel:Open()
+                end
+            end
+
+            Library:GiveSignal(UserInputService.InputBegan:Connect(function(InputObj: InputObject)
+                if not SearchPanel.Active or not IsClickInput(InputObj) then
+                    return
+                end
+
+                local Point = Vector2.new(Mouse.X, Mouse.Y)
+                if Library:MouseIsOverFrame(Panel, Point) or Library:MouseIsOverFrame(SearchButton, Point) then
+                    return
+                end
+
+                SearchPanel:Close()
+            end))
+        end
 
         --// Bottom Bar \\--
         local BottomClip = New("Frame", {
@@ -11845,7 +12381,7 @@ function Library:CreateWindow(WindowInfo)
         DividerLine.Position = UDim2.fromOffset(Width, 0)
 
         TitleHolder.Size = UDim2.new(0, Width, 1, 0)
-        RightWrapper.Size = UDim2.new(1, -Width - 109 - 1, 1, -16)
+        RightWrapper.Size = UDim2.new(1, -Width - 151 - 1, 1, -16)
         Tabs.Size = UDim2.new(0, Width, 1, -70)
         Container.Size = UDim2.new(1, -Width - 1, 1, -70)
 
@@ -11907,6 +12443,7 @@ function Library:CreateWindow(WindowInfo)
         local TabContainer
         local TabLeft
         local TabRight
+        local TabFull
 
         Icon = Library:GetCustomIcon(Icon)
         do
@@ -11991,6 +12528,7 @@ function Library:CreateWindow(WindowInfo)
             })
 
             TabLeft = New("ScrollingFrame", {
+                Name = "CloudyColumn",
                 AutomaticCanvasSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
                 CanvasSize = UDim2.fromScale(0, 0),
@@ -12024,6 +12562,7 @@ function Library:CreateWindow(WindowInfo)
             end
 
             TabRight = New("ScrollingFrame", {
+                Name = "CloudyColumn",
                 AnchorPoint = Vector2.new(1, 0),
                 AutomaticCanvasSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
@@ -12057,6 +12596,42 @@ function Library:CreateWindow(WindowInfo)
                     Parent = TabRight,
                 })
             end
+
+            --// Full width column (single groupbox pages) \\--
+            TabFull = New("ScrollingFrame", {
+                Name = "CloudyColumn",
+                AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                BackgroundTransparency = 1,
+                CanvasSize = UDim2.fromScale(0, 0),
+                ScrollBarImageTransparency = 1,
+                ScrollBarThickness = 0,
+                Size = UDim2.fromScale(1, 1),
+                Visible = false,
+                Parent = TabContainer,
+            })
+            New("UIListLayout", {
+                Padding = UDim.new(0, 2),
+                Parent = TabFull,
+            })
+            New("UIPadding", {
+                PaddingBottom = UDim.new(0, 2),
+                PaddingLeft = UDim.new(0, 2),
+                PaddingRight = UDim.new(0, 2),
+                PaddingTop = UDim.new(0, 2),
+                Parent = TabFull,
+            })
+            do
+                New("Frame", {
+                    BackgroundTransparency = 1,
+                    LayoutOrder = -1,
+                    Parent = TabFull,
+                })
+                New("Frame", {
+                    BackgroundTransparency = 1,
+                    LayoutOrder = 1,
+                    Parent = TabFull,
+                })
+            end
         end
 
         --// Tab Table \\--
@@ -12073,10 +12648,9 @@ function Library:CreateWindow(WindowInfo)
             Window = Window,
             Button = TabButton,
             Container = TabContainer,
-            Sides = {
-                TabLeft,
-                TabRight,
-            },
+            Sides = { TabLeft, TabRight, TabFull },
+            Columns = { Left = TabLeft, Right = TabRight, Full = TabFull },
+            Pages = {},
             WarningBox = {
                 IsNormal = false,
                 LockSize = false,
@@ -12089,6 +12663,82 @@ function Library:CreateWindow(WindowInfo)
             Tabboxes = {},
             DependencyGroupboxes = {},
         }
+
+        --// Glow behind the active tab button \\--
+        Tab.Glow = Library:AddShadow(TabButton, 14, 0, 1, "AccentColor")
+
+        --// Empty tab card (icon + title + description) \\--
+        do
+            local EmptyCard = New("Frame", {
+                AutomaticSize = Enum.AutomaticSize.Y,
+                BackgroundColor3 = "MainColor",
+                BackgroundTransparency = 0.25,
+                Position = UDim2.fromOffset(2, 4),
+                Size = UDim2.new(1, -4, 0, 0),
+                Parent = TabContainer,
+            })
+            table.insert(
+                Library.Corners,
+                New("UICorner", {
+                    CornerRadius = UDim.new(0, Library.CornerRadius),
+                    Parent = EmptyCard,
+                })
+            )
+            Library:AddOutline(EmptyCard, 10, 3, 0.7)
+
+            New("UIListLayout", {
+                HorizontalAlignment = Enum.HorizontalAlignment.Center,
+                Padding = UDim.new(0, 10),
+                Parent = EmptyCard,
+            })
+            New("UIPadding", {
+                PaddingBottom = UDim.new(0, 28),
+                PaddingLeft = UDim.new(0, 24),
+                PaddingRight = UDim.new(0, 24),
+                PaddingTop = UDim.new(0, 28),
+                Parent = EmptyCard,
+            })
+
+            if Icon then
+                local EmptyIcon = New("ImageLabel", {
+                    ImageColor3 = Icon.Custom and "WhiteColor" or "AccentColor",
+                    LayoutOrder = 1,
+                    Size = UDim2.fromOffset(44, 44),
+                    Parent = EmptyCard,
+                })
+                Library:ApplyLucideIcon(EmptyIcon, Icon)
+            end
+
+            New("TextLabel", {
+                AutomaticSize = Enum.AutomaticSize.Y,
+                BackgroundTransparency = 1,
+                LayoutOrder = 2,
+                Size = UDim2.fromScale(1, 0),
+                Text = tostring(Name),
+                TextSize = 22,
+                TextWrapped = true,
+                Parent = EmptyCard,
+            })
+
+            local EmptyDescription = New("TextLabel", {
+                AutomaticSize = Enum.AutomaticSize.Y,
+                BackgroundTransparency = 1,
+                LayoutOrder = 3,
+                Size = UDim2.new(0.8, 0, 0, 0),
+                Text = (typeof(Description) == "string" and Description ~= "") and Description or "Nothing here yet.",
+                TextSize = 15,
+                TextTransparency = 0.45,
+                TextWrapped = true,
+                Parent = EmptyCard,
+            })
+            Tab.EmptyCard = EmptyCard
+            Tab.EmptyDescription = EmptyDescription
+
+            function Tab:UpdateEmptyState()
+                local Empty = next(Tab.Groupboxes) == nil and next(Tab.Tabboxes) == nil and #Tab.Pages == 0
+                EmptyCard.Visible = Empty
+            end
+        end
 
         --// Warning Box \\--
         local WarningBoxHolder = New("Frame", {
@@ -12234,9 +12884,31 @@ function Library:CreateWindow(WindowInfo)
 
         function Tab:RefreshSides()
             local Offset = WarningBoxHolder.Visible and WarningBox.Size.Y.Offset + 8 or 0
+            local PagesOffset = (#Tab.Pages > 0) and (Offset + 44) or Offset
+
             for _, Side in Tab.Sides do
-                Side.Position = UDim2.new(Side.Position.X.Scale, 0, 0, Offset)
-                Side.Size = UDim2.new(0.5, -3, 1, -Offset)
+                if Side:GetAttribute("PageSide") then
+                    continue
+                end
+
+                if Side == TabFull then
+                    Side.Position = UDim2.fromOffset(0, PagesOffset)
+                    Side.Size = UDim2.new(1, 0, 1, -PagesOffset)
+                else
+                    Side.Position = UDim2.new(Side.Position.X.Scale, 0, 0, PagesOffset)
+                    Side.Size = UDim2.new(0.5, -3, 1, -PagesOffset)
+                end
+            end
+
+            if Tab.PageBar then
+                Tab.PageBar.Position = UDim2.fromOffset(0, Offset + 4)
+            end
+            if Tab.EmptyCard then
+                Tab.EmptyCard.Position = UDim2.fromOffset(2, Offset + 4)
+            end
+            for _, Page in Tab.Pages do
+                Page.Frame.Position = UDim2.fromOffset(0, PagesOffset)
+                Page.Frame.Size = UDim2.new(1, 0, 1, -PagesOffset)
             end
         end
 
@@ -12265,10 +12937,68 @@ function Library:CreateWindow(WindowInfo)
             Tab:RefreshSides()
         end
 
+        --// Column helpers (single side / nested columns) \\--
+        local function SideFrame(Columns, Side)
+            if Side == 3 or Columns.UsesFull then
+                Columns.UsesFull = true
+                Columns.Left.Visible = false
+                Columns.Right.Visible = false
+                Columns.Full.Visible = true
+
+                return Columns.Full
+            end
+
+            return Side == 2 and Columns.Right or Columns.Left
+        end
+
+        local function GetNestedColumn(Owner, Side)
+            if not Owner.NestedColumns then
+                local Holder = New("Frame", {
+                    AutomaticSize = Enum.AutomaticSize.Y,
+                    BackgroundTransparency = 1,
+                    Size = UDim2.fromScale(1, 0),
+                    Parent = Owner.Container,
+                })
+
+                local function Column(Scale, Offset)
+                    local Frame = New("Frame", {
+                        AutomaticSize = Enum.AutomaticSize.Y,
+                        BackgroundTransparency = 1,
+                        Position = UDim2.new(Scale, Offset, 0, 0),
+                        Size = UDim2.new(0.5, -4, 0, 0),
+                        Parent = Holder,
+                    })
+                    New("UIListLayout", {
+                        Padding = UDim.new(0, 2),
+                        Parent = Frame,
+                    })
+
+                    return Frame
+                end
+
+                Owner.NestedColumns = { Column(0, 0), Column(0.5, 4) }
+            end
+
+            return Owner.NestedColumns[Side == 2 and 2 or 1]
+        end
+
+        local function ResolveParent(Owner, Info, IsNested, RawSide)
+            if IsNested then
+                if RawSide ~= nil and (Info.Side == 1 or Info.Side == 2) then
+                    return GetNestedColumn(Owner, Info.Side)
+                end
+
+                return Owner.Container
+            end
+
+            return SideFrame(Owner.Columns or Tab.Columns, Info.Side)
+        end
+
         local function AddTabbox(self, Info)
+            local RawSide = typeof(Info) == "table" and Info.Side or nil
             Info = Library:Validate(Info, Templates.Tabbox)
             local ParentObj = self
-            local IsNested = ParentObj.Type == "Groupbox" or ParentObj.Type == "SubTab"
+            local IsNested = ParentObj.Type == "Groupbox" or ParentObj.Type == "SubTab" or ParentObj.IsDepbox == true
 
             if typeof(Info.Side) == "string" then
                 local lowerSide = string.lower(Info.Side)
@@ -12283,7 +13013,7 @@ function Library:CreateWindow(WindowInfo)
                 AutomaticSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
                 Size = UDim2.fromScale(1, 0),
-                Parent = if IsNested then ParentObj.Container else (Info.Side == 1 and TabLeft or TabRight),
+                Parent = ResolveParent(ParentObj, Info, IsNested, RawSide),
             })
             New("UIListLayout", {
                 Padding = UDim.new(0, 6),
@@ -12628,11 +13358,13 @@ function Library:CreateWindow(WindowInfo)
                 end
             end
 
+            Tabbox.Page = ParentObj.Type == "Page" and ParentObj or ParentObj.Page
             if Info.Name then
                 Tab.Tabboxes[Info.Name] = Tabbox
             else
                 table.insert(Tab.Tabboxes, Tabbox)
             end
+            Tab:UpdateEmptyState()
 
             return Tabbox
         end
@@ -12649,8 +13381,22 @@ function Library:CreateWindow(WindowInfo)
             return Tab:AddTabbox({ Side = 2, Name = Name })
         end
 
-        function Tab:AddGroupbox(Info)
+        local function BuildGroupbox(Owner, Info)
+            local RawInfo = typeof(Info) == "table" and Info or {}
+            local RawSide = RawInfo.Side
+            local RawPopOut = RawInfo.PopOut
+            local IsNested = Owner.Type == "Groupbox" or Owner.Type == "SubTab" or Owner.IsDepbox == true
+
             Info = Library:Validate(Info, Templates.Groupbox)
+
+            --// Collapsing is opt-in: Collapsible = true (or Collapsed = true/false). Otherwise only the title is shown. \\--
+            local CanCollapse = (
+                RawInfo.Collapsible == true
+                or RawInfo.Collapse == true
+                or RawInfo.Collapsed ~= nil
+                or RawInfo.DisableCollapsing == false
+            ) and RawInfo.DisableCollapsing ~= true
+            Info.DisableCollapsing = not CanCollapse
 
             if typeof(Info.Side) == "string" then
                 local lowerSide = string.lower(Info.Side)
@@ -12665,7 +13411,7 @@ function Library:CreateWindow(WindowInfo)
                 AutomaticSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
                 Size = UDim2.fromScale(1, 0),
-                Parent = (Info.Side == 1) and TabLeft or TabRight,
+                Parent = ResolveParent(Owner, Info, IsNested, RawSide),
             })
             New("UIListLayout", {
                 Padding = UDim.new(0, 6),
@@ -12855,6 +13601,10 @@ function Library:CreateWindow(WindowInfo)
 
                 local TopSize = (GroupboxTop.AbsoluteSize.Y / Library.DPIScale)
                 local ContainerSize = (GroupboxList.AbsoluteContentSize.Y / Library.DPIScale) + 18
+                if Groupbox.WarpHeight then
+                    --// Warp: groupbox is at most WarpHeight tall (header included), body scrolls \\--
+                    ContainerSize = math.min(ContainerSize, math.max(40, Groupbox.WarpHeight - TopSize - 1))
+                end
                 if Groupbox.PoppedOut then
                     ContainerSize = math.min(ContainerSize, GetPopOutBodyMaxHeight(Groupbox, TopSize + 1))
                 end
@@ -12941,8 +13691,32 @@ function Library:CreateWindow(WindowInfo)
                 Groupbox:SetCollapsed(not Groupbox.Collapsed)
             end
 
+            --// Warp: Groupbox:SetWarp(240) -> max height 240 and the body becomes a scroll frame, SetWarp(nil) -> normal \\--
+            function Groupbox:SetWarp(Height: (number | boolean)?)
+                if Height == true then
+                    Height = 300
+                end
+
+                Groupbox.WarpHeight = typeof(Height) == "number" and math.max(80, Height) or nil
+
+                local Registry = Library.Registry[GroupboxContainer] or {}
+                Registry.ScrollBarImageColor3 = "AccentColor"
+                Library.Registry[GroupboxContainer] = Registry
+
+                GroupboxContainer.ScrollBarImageColor3 = Library.Scheme.AccentColor
+                GroupboxContainer.ScrollBarImageTransparency = 0.4
+                GroupboxContainer.ScrollBarThickness = Groupbox.WarpHeight and 3 or 0
+                GroupboxContainer.ScrollingDirection = Enum.ScrollingDirection.Y
+
+                if not Groupbox.WarpHeight then
+                    GroupboxContainer.CanvasPosition = Vector2.zero
+                end
+
+                Groupbox:Resize()
+            end
+
             Library:MakeBoxPopOut(Groupbox, {
-                Enabled = Info.PopOut ~= false,
+                Enabled = if IsNested then RawPopOut == true else Info.PopOut ~= false,
                 MaxPopOutHeight = Info.MaxPopOutHeight,
                 PopOutWidth = Info.PopOutWidth,
 
@@ -13040,7 +13814,34 @@ function Library:CreateWindow(WindowInfo)
             setmetatable(Groupbox, BaseGroupbox)
 
             Groupbox:Resize()
-            Tab.Groupboxes[Info.Name] = Groupbox
+
+            Groupbox.Owner = Owner
+
+            local WarpValue = RawInfo.Warp
+            if WarpValue == nil then
+                WarpValue = RawInfo.Wrap
+            end
+            if WarpValue == true then
+                WarpValue = RawInfo.WarpHeight or RawInfo.Height or 300
+            end
+            if WarpValue then
+                Groupbox:SetWarp(WarpValue)
+            end
+            Groupbox.ParentBox = IsNested and Owner or nil
+            Groupbox.Page = if Owner.Type == "Page" then Owner else Owner.Page
+
+            local Key = Info.Name
+            if Groupbox.Page then
+                Groupbox.Page.Groupboxes[Info.Name] = Groupbox
+                Key = Groupbox.Page.Name .. "/" .. Key
+            end
+            if IsNested then
+                Owner.NestedGroupboxes = Owner.NestedGroupboxes or {}
+                table.insert(Owner.NestedGroupboxes, Groupbox)
+                Key = tostring(Owner.Name or "Nested") .. "/" .. Key
+            end
+            Tab.Groupboxes[Key] = Groupbox
+            Tab:UpdateEmptyState()
 
             if Info.Visible == false then
                 Groupbox:Hide()
@@ -13053,6 +13854,12 @@ function Library:CreateWindow(WindowInfo)
             return Groupbox
         end
 
+        Tab._BuildGroupbox = BuildGroupbox
+
+        function Tab:AddGroupbox(Info)
+            return BuildGroupbox(Tab.Pages[1] or Tab, Info)
+        end
+
         --// Deprecated - Use Tab:AddGroupbox instead.
         function Tab:AddLeftGroupbox(Name, IconName, Visible, Collapsed, DisableCollapsing)
             return Tab:AddGroupbox({ Side = 1, Name = Name, IconName = IconName, Visible = Visible, Collapsed = Collapsed, DisableCollapsing = DisableCollapsing })
@@ -13061,6 +13868,179 @@ function Library:CreateWindow(WindowInfo)
         --// Deprecated - Use Tab:AddGroupbox instead.
         function Tab:AddRightGroupbox(Name, IconName, Visible, Collapsed, DisableCollapsing)
             return Tab:AddGroupbox({ Side = 2, Name = Name, IconName = IconName, Visible = Visible, Collapsed = Collapsed, DisableCollapsing = DisableCollapsing })
+        end
+
+        --// Pages: a tab can hold several pages, switched with the pill bar at the top \\--
+        local PageBar
+        function Tab:AddPage(...)
+            local Name
+            if select("#", ...) == 1 and typeof(...) == "table" then
+                Name = (select(1, ...)).Name
+            else
+                Name = select(1, ...)
+            end
+            Name = tostring(Name or "Page")
+
+            if not PageBar then
+                PageBar = New("Frame", {
+                    BackgroundTransparency = 1,
+                    Position = UDim2.fromOffset(0, 4),
+                    Size = UDim2.new(1, 0, 0, 36),
+                    Parent = TabContainer,
+                })
+                New("UIListLayout", {
+                    FillDirection = Enum.FillDirection.Horizontal,
+                    Padding = UDim.new(0, 8),
+                    VerticalAlignment = Enum.VerticalAlignment.Center,
+                    Parent = PageBar,
+                })
+                New("UIPadding", {
+                    PaddingLeft = UDim.new(0, 2),
+                    Parent = PageBar,
+                })
+                Tab.PageBar = PageBar
+
+                --// Pages replace the tab's own columns \--
+                TabLeft.Visible = false
+                TabRight.Visible = false
+                TabFull.Visible = false
+            end
+
+            local Frame = New("Frame", {
+                BackgroundTransparency = 1,
+                Size = UDim2.fromScale(1, 1),
+                Visible = false,
+                Parent = TabContainer,
+            })
+
+            local function MakeColumn(Properties)
+                Properties.AutomaticCanvasSize = Enum.AutomaticSize.Y
+                Properties.BackgroundTransparency = 1
+                Properties.CanvasSize = UDim2.fromScale(0, 0)
+                Properties.Name = "CloudyColumn"
+                Properties.ScrollBarImageTransparency = 1
+                Properties.ScrollBarThickness = 0
+                Properties.Parent = Frame
+
+                local Column = New("ScrollingFrame", Properties)
+                New("UIListLayout", {
+                    Padding = UDim.new(0, 2),
+                    Parent = Column,
+                })
+                New("UIPadding", {
+                    PaddingBottom = UDim.new(0, 2),
+                    PaddingLeft = UDim.new(0, 2),
+                    PaddingRight = UDim.new(0, 2),
+                    PaddingTop = UDim.new(0, 2),
+                    Parent = Column,
+                })
+                New("Frame", {
+                    BackgroundTransparency = 1,
+                    LayoutOrder = -1,
+                    Parent = Column,
+                })
+                New("Frame", {
+                    BackgroundTransparency = 1,
+                    LayoutOrder = 1,
+                    Parent = Column,
+                })
+
+                Column:SetAttribute("PageSide", true)
+                table.insert(Tab.Sides, Column)
+                return Column
+            end
+
+            local Button = New("TextButton", {
+                AutomaticSize = Enum.AutomaticSize.X,
+                BackgroundColor3 = "MainColor",
+                BackgroundTransparency = 1,
+                Size = UDim2.fromOffset(0, 32),
+                Text = Name,
+                TextSize = 14,
+                TextTransparency = 0.5,
+                Parent = PageBar,
+            })
+            New("UICorner", {
+                CornerRadius = UDim.new(1, 0),
+                Parent = Button,
+            })
+            New("UIPadding", {
+                PaddingLeft = UDim.new(0, 16),
+                PaddingRight = UDim.new(0, 16),
+                Parent = Button,
+            })
+
+            local Page = {
+                Type = "Page",
+                Name = Name,
+                Tab = Tab,
+                Frame = Frame,
+                Button = Button,
+                Groupboxes = {},
+                Tabboxes = {},
+                Columns = {
+                    Left = MakeColumn({ Size = UDim2.new(0.5, -3, 1, 0) }),
+                    Right = MakeColumn({
+                        AnchorPoint = Vector2.new(1, 0),
+                        Position = UDim2.fromScale(1, 0),
+                        Size = UDim2.new(0.5, -3, 1, 0),
+                    }),
+                    Full = MakeColumn({ Size = UDim2.fromScale(1, 1), Visible = false }),
+                },
+            }
+
+            function Page:Show()
+                if Tab.ActivePage == Page then
+                    return
+                end
+
+                if Tab.ActivePage then
+                    Tab.ActivePage:Hide()
+                end
+                Tab.ActivePage = Page
+
+                Frame.Visible = true
+                TweenService:Create(Button, Library.TweenInfo, {
+                    BackgroundTransparency = 0,
+                    TextTransparency = 0,
+                }):Play()
+            end
+
+            function Page:Hide()
+                Frame.Visible = false
+                TweenService:Create(Button, Library.TweenInfo, {
+                    BackgroundTransparency = 1,
+                    TextTransparency = 0.5,
+                }):Play()
+            end
+
+            function Page:AddGroupbox(Info)
+                return BuildGroupbox(Page, Info)
+            end
+
+            function Page:AddLeftGroupbox(GroupName, IconName)
+                return BuildGroupbox(Page, { Side = 1, Name = GroupName, IconName = IconName })
+            end
+
+            function Page:AddRightGroupbox(GroupName, IconName)
+                return BuildGroupbox(Page, { Side = 2, Name = GroupName, IconName = IconName })
+            end
+
+            Page.AddTabbox = AddTabbox
+
+            Button.MouseButton1Click:Connect(function()
+                Page:Show()
+            end)
+
+            table.insert(Tab.Pages, Page)
+            Tab:UpdateEmptyState()
+            Tab:RefreshSides()
+
+            if not Tab.ActivePage then
+                Page:Show()
+            end
+
+            return Page
         end
 
         function Tab:Hover(Hovering)
@@ -13110,6 +14090,19 @@ function Library:CreateWindow(WindowInfo)
 
             Library:PlayTabAnimation(Tab, true)
             Tab:RefreshSides()
+
+            for _, Other in Library.Tabs do
+                if typeof(Other) == "table" and Other.Glow then
+                    TweenService:Create(Other.Glow, Library.TweenInfo, {
+                        Transparency = 1,
+                    }):Play()
+                end
+            end
+            if Tab.Glow then
+                TweenService:Create(Tab.Glow, Library.TweenInfo, {
+                    Transparency = 0.6,
+                }):Play()
+            end
 
             Library.ActiveTab = Tab
 
@@ -14234,6 +15227,10 @@ function Library:CreateWindow(WindowInfo)
                 end
             end)
         elseif not Library.Toggled then
+            if Library.SearchPanel then
+                Library.SearchPanel:Close()
+            end
+
             RestoreMouseIcon()
             TooltipLabel.Visible = false
 
@@ -14387,6 +15384,11 @@ function Library:CreateWindow(WindowInfo)
         end
 
         if Input.KeyCode == Enum.KeyCode.Escape then
+            if Library.SearchPanel and Library.SearchPanel.Active then
+                Library.SearchPanel:Close()
+                return
+            end
+
             -- Releasing focus from a text input takes priority and never toggles the window --
             local FocusedBox = UserInputService:GetFocusedTextBox()
             if FocusedBox then
