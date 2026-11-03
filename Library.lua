@@ -443,9 +443,9 @@ local Templates = {
             Gap = 6,
             Padding = 10,
             CornerRadius = 14,
-            Indicator = false,
-            IndicatorWidth = 2,
-            IndicatorHeight = 20,
+            Indicator = true,
+            IndicatorWidth = 3,
+            IndicatorHeight = 18,
         },
     },
     Groupbox = {
@@ -1498,6 +1498,459 @@ type IconModule = {
     GetAsset: (Name: string) -> Icon?,
 }
 
+--// Built-in icon registry. Use Icon = "provider:icon-name", e.g. "lucide:target", "tabler:eye", "phosphor:sword" \\--
+--// Providers: lucide, tabler, heroicons, solar, material, fluent, phosphor. Sprite sheets are downloaded once and cached
+--// in workspace/CloudyRevolution/icons. Nothing to load or set up. \\--
+local function BuildIconRegistry()
+	local Registry = {}
+
+	--// Helpers \\--
+	local function Check(...)
+		for index = 1, select("#", ...) do
+			if typeof((select(index, ...))) ~= "function" then return false end
+		end
+		return true
+	end
+
+	local AssetManager = {}
+	do
+		local BASE_PATH = "CloudyRevolution/icons"
+
+		AssetManager.Supported = Check(isfile, isfolder, makefolder, readfile, writefile, getcustomasset)
+		AssetManager.CanDelete = AssetManager.Supported and Check(listfiles, delfolder)
+
+		function AssetManager.Path(relative: string?): string
+			return if relative then `{BASE_PATH}/{relative}` else BASE_PATH
+		end
+
+		function AssetManager.EnsureFolder(relative: string?)
+			local current = ""
+			for _, part in string.split(AssetManager.Path(relative), "/") do
+				current = if current == "" then part else `{current}/{part}`
+				if not isfolder(current) then
+					makefolder(current)
+				end
+			end
+		end
+
+		function AssetManager.IsFile(relative: string): boolean
+			local success, result = pcall(isfile, AssetManager.Path(relative))
+			return success and result == true
+		end
+
+		function AssetManager.Read(relative: string): string?
+			return if AssetManager.IsFile(relative) then readfile(AssetManager.Path(relative)) else nil
+		end
+
+		function AssetManager.Write(relative: string, data: string)
+			writefile(AssetManager.Path(relative), data)
+		end
+
+		function AssetManager.Download(relative: string, url: string, validate: ((string) -> boolean)?)
+			if AssetManager.IsFile(relative) then return end
+
+			local data = game:HttpGet(url)
+			assert(not validate or validate(data), `Invalid download for {relative}`)
+			AssetManager.Write(relative, data)
+		end
+
+		function AssetManager.ListNames(): { string }
+			local names = {}
+			for _, entry in listfiles(BASE_PATH) do
+				local name = entry:gsub("\\", "/"):gsub("/$", ""):match("([^/]+)$")
+				if name then
+					table.insert(names, name)
+				end
+			end
+			return names
+		end
+
+		function AssetManager.GetAsset(relative: string): string
+			return getcustomasset(AssetManager.Path(relative))
+		end
+	end
+
+	--// Constants \\--
+	local ASSET_BASE_URL = "https://molto.pages.dev/"
+	local DEFAULT_PROVIDER = "lucide"
+	local PROVIDERS = {
+		lucide = { Hash = "11d446c12405c3dcce9fcea63ca304378f0d002569c5be7431c2e946a896dd2c", Font = true, Name = "Lucide", Sheets = 2, License = "ISC", Count = 2095, FontParts = 2 },
+		tabler = { Hash = "de0041ef23f9edba3c95e9f20f46d1a3c839d6f610a83bdcf44abd7229542e98", Font = true, Name = "Tabler", Sheets = 4, License = "MIT", Count = 6305, FontParts = 5 },
+		heroicons = { Hash = "da3ef30e5bda1a0cf6586a6de9789a12537d550aec9598eccc85b4326be76615", Font = true, Name = "Heroicons", Sheets = 1, License = "MIT", Count = 1288, FontParts = 2 },
+		solar = { Hash = "01d27f4a6f5ef2740f7080fb66f89fdaca0682cff34776dd71342aed31c4788b", Font = true, Name = "Solar", Sheets = 6, License = "CC BY 4.0", Count = 8859, FontParts = 6 },
+		material = { Hash = "993be4ca36fcb877522411e30786f8fe60cfeef65173a101598a645d16767af7", Font = true, Name = "Material Symbols", Sheets = 11, License = "Apache 2.0", Count = 16475, FontParts = 17 },
+		fluent = { Hash = "1d72f6702e4bbbf7d7b728f29f2b1d3f7f462b9aeebc112e07d1114ec7e28c9c", Font = true, Name = "Fluent UI", Sheets = 13, License = "MIT", Count = 20334, FontParts = 25 },
+		phosphor = { Hash = "3a5e9b8ed33e68efb30de3f96814cb55320b7d7579fa375e29cf2f9fcea4d371", Font = true, Name = "Phosphor", Sheets = 6, License = "MIT", Count = 9161, FontParts = 7 },
+	}
+
+	local MAX_ALIAS_DEPTH = 8
+	local PRELOAD_WORKERS = 6
+
+	--// Providers \\--
+	type ProviderState = {
+		Id: string,
+		Icons: { string },
+		Aliases: { [string]: string },
+		Rects: { { any } },
+		NoFont: { [string]: boolean },
+		Index: { [string]: number },
+		SheetUrls: { [number]: string },
+		Folder: string,
+		FontParts: number?,
+		FontName: string,
+		Fonts: { [number]: Font | false },
+	}
+
+	local loadedProviders: { [string]: ProviderState } = {}
+	local currentProvider = DEFAULT_PROVIDER
+
+	-- Keeps only the newest build of a provider on disk
+	local function PruneCache(id: string, currentFolder: string)
+		if not AssetManager.CanDelete then return end
+
+		for _, name in AssetManager.ListNames() do
+			local hash = if name:sub(1, #id + 1) == `{id}-` then name:sub(#id + 2) else nil
+			if hash and name ~= currentFolder and hash:match("^" .. string.rep("%x", 64) .. "$") then
+				pcall(delfolder, AssetManager.Path(name))
+			end
+		end
+	end
+
+	local function LoadProvider(id: string): ProviderState
+		local loaded = loadedProviders[id]
+		if loaded then return loaded end
+
+		local meta = PROVIDERS[id]
+		assert(meta, `Unknown icon provider "{id}"`)
+
+		local folder = `{id}-{meta.Hash}`
+		local dataFile = `{folder}/data.lua`
+		local dataUrl = `{ASSET_BASE_URL}providers/{id}.lua`
+
+		local useCustomSprites = false
+		local source: string? = nil
+
+		if AssetManager.Supported then
+			useCustomSprites = pcall(function()
+				AssetManager.EnsureFolder(folder)
+				for sheet = 1, meta.Sheets do
+					AssetManager.Download(`{folder}/{sheet}.png`, `{ASSET_BASE_URL}spritesheets/{id}/{sheet}.png`, function(data)
+						return data:sub(1, 8) == "\137PNG\r\n\26\n" -- PNG header
+					end)
+				end
+				AssetManager.GetAsset(`{folder}/1.png`)
+			end)
+
+			pcall(function()
+				AssetManager.EnsureFolder(folder)
+				AssetManager.Download(dataFile, dataUrl, function(data)
+					return data:sub(1, 6) == "return"
+				end)
+				source = AssetManager.Read(dataFile)
+			end)
+
+			if useCustomSprites then
+				pcall(PruneCache, id, folder)
+			end
+		end
+
+		local data = loadstring(source or game:HttpGet(dataUrl))()
+
+		local sheetUrls = {}
+		for sheet, fallback in data.Sheets do
+			sheetUrls[sheet] = if useCustomSprites then AssetManager.GetAsset(`{folder}/{sheet}.png`) else fallback
+		end
+
+		local index = {}
+		for position, name in data.Icons do
+			index[name] = position
+		end
+
+		-- Icons with see-through layers cannot be drawn by a one color font, so they only exist as sprites
+		local noFont = {}
+		for _, name in data.NoFont or {} do
+			noFont[name] = true
+		end
+
+		local state: ProviderState = {
+			Id = id,
+			Icons = data.Icons,
+			Aliases = data.Aliases,
+			Rects = data.Rects,
+			NoFont = noFont,
+			Index = index,
+			SheetUrls = sheetUrls,
+			Folder = folder,
+			FontParts = if meta.Font then meta.FontParts else nil,
+			FontName = meta.Name,
+			Fonts = {},
+		}
+
+		loadedProviders[id] = state
+		return state
+	end
+
+	-- Must match FontPartOf in scripts/build.luau
+	local function FontPartOf(name: string, parts: number): number
+		local hash = 7
+		for index = 1, #name do
+			hash = (hash * 131 + string.byte(name, index)) % 2147483629
+		end
+		return hash % parts + 1
+	end
+
+	-- Roblox does not shape a ligature whose text starts with a digit, so the font stores those icons with a letter prefix.
+	-- Must match LigatureOf in scripts/build.luau
+	local function LigatureOf(name: string): string
+		return if name:match("^%d") then `x-{name}` else name
+	end
+
+	-- Big sets are split into several fonts, so a font is downloaded when its first icon is looked up
+	local function GetFontFace(state: ProviderState, part: number): Font?
+		local cached = state.Fonts[part]
+		if cached ~= nil then return cached or nil end
+
+		local face: Font? = nil
+		if AssetManager.Supported then
+			pcall(function()
+				local ttfFile = `{state.Folder}/font-{part}.ttf`
+				local familyFile = `{state.Folder}/font-{part}.json`
+
+				AssetManager.EnsureFolder(state.Folder)
+				AssetManager.Download(ttfFile, `{ASSET_BASE_URL}fonts/{state.Id}/{state.Id}-{part}.ttf`, function(data)
+					return data:sub(1, 4) == "\0\1\0\0" -- TrueType header
+				end)
+				AssetManager.Write(familyFile, game:GetService("HttpService"):JSONEncode({
+					name = `{state.FontName} {part}`,
+					loadStrategy = "sameFamilyOnly",
+					faces = {
+						{ name = "Regular", weight = 400, style = "normal", assetId = AssetManager.GetAsset(ttfFile) },
+					},
+				}))
+
+				face = Font.new(AssetManager.GetAsset(familyFile))
+			end)
+		end
+
+		state.Fonts[part] = face or false
+		return face
+	end
+
+	--// API \\--
+	Registry.Providers = {}
+	for id in PROVIDERS do
+		table.insert(Registry.Providers, id)
+	end
+	table.sort(Registry.Providers)
+
+	function Registry.GetProviderInfo(id: string?)
+		local meta = PROVIDERS[id or currentProvider]
+		if not meta then return nil end
+
+		return { Id = id or currentProvider, Name = meta.Name, License = meta.License, Count = meta.Count }
+	end
+
+	function Registry.GetProvider(): string
+		return currentProvider
+	end
+
+	function Registry.SetProvider(id: string)
+		assert(PROVIDERS[id], `Unknown icon provider "{id}"`)
+
+		LoadProvider(id)
+		currentProvider = id
+	end
+
+	function Registry.GetIcons(provider: string?): { string }
+		return LoadProvider(provider or currentProvider).Icons
+	end
+
+	function Registry.HasIcon(name: string, provider: string?): boolean
+		return Registry.GetAsset(name, provider) ~= nil
+	end
+
+	local function Resolve(state: ProviderState, name: string): string
+		local resolved = name
+		for _ = 1, MAX_ALIAS_DEPTH do
+			local target = state.Aliases[resolved]
+			if not target then break end
+			resolved = target
+		end
+		return resolved
+	end
+
+	-- Downloads everything up front so GetAsset never yields. Without names it fetches every font part of the provider.
+	-- Returns the number of font parts that are ready
+	function Registry.PreloadAsync(names: { string }?, provider: string?): number
+		local state = LoadProvider(provider or currentProvider)
+		if not state.FontParts then return 0 end
+
+		local seen: { [number]: boolean } = {}
+		local queue: { number } = {}
+		local function Add(part: number)
+			if not seen[part] then
+				seen[part] = true
+				table.insert(queue, part)
+			end
+		end
+
+		if names then
+			for _, name in names do
+				local resolved = Resolve(state, name)
+				if state.Index[resolved] and not state.NoFont[resolved] then
+					Add(FontPartOf(resolved, state.FontParts))
+				end
+			end
+		else
+			for part = 1, state.FontParts do
+				Add(part)
+			end
+		end
+
+		local ready = 0
+		local function Work()
+			while true do
+				local part = table.remove(queue)
+				if not part then return end
+				if GetFontFace(state, part) then
+					ready += 1
+				end
+			end
+		end
+
+		-- Several parts download at once, the rest of the queue is picked up as workers finish
+		local workers = math.min(PRELOAD_WORKERS, #queue)
+		if typeof(task) ~= "table" or workers <= 1 then
+			Work()
+			return ready
+		end
+
+		local running = workers
+		for _ = 1, workers do
+			task.spawn(function()
+				pcall(Work)
+				running -= 1
+			end)
+		end
+		while running > 0 do
+			task.wait()
+		end
+		return ready
+	end
+
+	function Registry.GetAsset(name: string, provider: string?)
+		local state = LoadProvider(provider or currentProvider)
+
+		local resolved = Resolve(state, name)
+
+		local position = state.Index[resolved]
+		if not position then
+			return nil
+		end
+
+		local rect = state.Rects[position]
+		local fontPart = if state.FontParts and not state.NoFont[resolved] then FontPartOf(resolved, state.FontParts) else nil
+		local fontFace = if fontPart then GetFontFace(state, fontPart) else nil
+
+		return {
+			IconName = name,
+			Provider = state.Id,
+			Url = state.SheetUrls[rect[1]],
+			ImageRectSize = Vector2.new(rect[2][1], rect[2][2]),
+			ImageRectOffset = Vector2.new(rect[3][1], rect[3][2]),
+
+			-- Only present when the provider font loaded. The font shapes Text into one icon through a ligature
+			FontFace = fontFace,
+			FontPart = fontPart,
+			Text = if fontFace then LigatureOf(resolved) else nil,
+		}
+	end
+
+	function Registry.SetIcon(iconInstance: TextLabel | ImageLabel, name: string, provider: string?)
+		assert(typeof(iconInstance) == "Instance" and (iconInstance:IsA("TextLabel") or iconInstance:IsA("ImageLabel")), "iconInstance must be a TextLabel or ImageLabel")
+
+		local asset = Registry.GetAsset(name, provider)
+		assert(asset, `Icon "{name}" not found in provider "{provider}"`)
+
+		if iconInstance:IsA("TextLabel") then
+			assert(asset.FontFace, "Environment does not support font icons. Try using an ImageLabel instead.")
+
+			iconInstance.Text = asset.Text
+			iconInstance.FontFace = asset.FontFace
+		else
+			iconInstance.Image = asset.Url
+			iconInstance.ImageRectSize = asset.ImageRectSize
+			iconInstance.ImageRectOffset = asset.ImageRectOffset
+		end
+	end
+
+	return Registry
+end
+
+local IconRegistry = nil -- nil = not built yet, false = failed
+local ProviderIconCache = {}
+
+Library.DefaultIconProvider = nil -- optional: plain names ("target") are looked up in this provider first
+
+local function GetIconRegistry()
+    if IconRegistry == nil then
+        local Success, Result = pcall(BuildIconRegistry)
+        IconRegistry = Success and Result or false
+    end
+
+    return IconRegistry or nil
+end
+
+--// Optional: swap in your own registry module (needs GetAsset + Providers) \--
+function Library:SetIconRegistry(Registry)
+    assert(
+        typeof(Registry) == "table" and typeof(Registry.GetAsset) == "function" and typeof(Registry.Providers) == "table",
+        "Registry must be an icon registry module (needs GetAsset and Providers)."
+    )
+
+    IconRegistry = Registry
+    table.clear(ProviderIconCache)
+end
+
+function Library:GetIconRegistry()
+    return GetIconRegistry()
+end
+
+function Library:GetIconProviders(): { string }
+    local Registry = GetIconRegistry()
+    return Registry and Registry.Providers or {}
+end
+
+function Library:SetDefaultIconProvider(Provider: string?)
+    Library.DefaultIconProvider = Provider
+end
+
+function Library:GetProviderIcon(Provider: string, Name: string)
+    local Registry = GetIconRegistry()
+    if not Registry then
+        return nil
+    end
+
+    local Key = Provider .. ":" .. Name
+    local Cached = ProviderIconCache[Key]
+    if Cached ~= nil then
+        return Cached or nil
+    end
+
+    local Success, Asset = pcall(Registry.GetAsset, Name, Provider)
+    local Result = false
+    if Success and typeof(Asset) == "table" and Asset.Url then
+        Result = {
+            Url = Asset.Url,
+            ImageRectOffset = Asset.ImageRectOffset,
+            ImageRectSize = Asset.ImageRectSize,
+        }
+    end
+
+    ProviderIconCache[Key] = Result
+    return Result or nil
+end
+
 local FetchIcons = false
 local Icons: IconModule | nil = nil
 
@@ -1523,6 +1976,17 @@ function Library:GetCustomIcon(IconName: string): any
         IconName = string.format("rbxassetid://%s", tostring(IconName))
     end
 
+    --// "provider:icon-name" \\--
+    if typeof(IconName) == "string" then
+        local Provider, ProviderName = string.match(IconName, "^([%w_%-]+):([^/].*)$")
+        if Provider then
+            local Registry = GetIconRegistry()
+            if Registry and table.find(Registry.Providers, Provider) then
+                return Library:GetProviderIcon(Provider, ProviderName)
+            end
+        end
+    end
+
     if IsCustomAssetIcon(IconName, true) then
         return {
             Url = IconName,
@@ -1536,6 +2000,13 @@ function Library:GetCustomIcon(IconName: string): any
             ImageRectSize = Vector2.zero,
             Custom = true,
         }
+    end
+
+    if Library.DefaultIconProvider and typeof(IconName) == "string" then
+        local DefaultIcon = Library:GetProviderIcon(Library.DefaultIconProvider, IconName)
+        if DefaultIcon then
+            return DefaultIcon
+        end
     end
 
     local LucideIcon = Library:GetIcon(IconName)
@@ -10616,6 +11087,19 @@ do
     end
 end
 
+function Library:SetTabButtonState(Button: GuiObject, Selected: boolean)
+    TweenService:Create(Button, Library.TweenInfo, {
+        BackgroundTransparency = Selected and 0 or 1,
+    }):Play()
+
+    local Stroke = Button:FindFirstChildOfClass("UIStroke")
+    if Stroke then
+        TweenService:Create(Stroke, Library.TweenInfo, {
+            Transparency = Selected and 0.35 or 1,
+        }):Play()
+    end
+end
+
 function Library:SetFont(FontFace)
     if typeof(FontFace) == "EnumItem" then
         FontFace = Font.fromEnum(FontFace :: any)
@@ -11989,7 +12473,7 @@ function Library:CreateWindow(WindowInfo)
         BottomBackground = New("Frame", {
             AnchorPoint = Vector2.new(0, 1),
             BackgroundColor3 = function()
-                return Library:GetBetterColor(Library.Scheme.BackgroundColor, 4)
+                return Library:GetBetterColor(Library.Scheme.BackgroundColor, -1)
             end,
             Position = UDim2.fromScale(0, 1),
             Size = UDim2.new(1, 0, 0, math.max(20, WindowInfo.CornerRadius * 2)),
@@ -12062,7 +12546,7 @@ function Library:CreateWindow(WindowInfo)
         --// Tabs \\--
         Tabs = New("ScrollingFrame", {
             AutomaticCanvasSize = Enum.AutomaticSize.Y,
-            BackgroundColor3 = "BackgroundColor",
+            BackgroundTransparency = 1,
             CanvasSize = UDim2.fromScale(0, 0),
             Position = UDim2.fromOffset(0, 49),
             ScrollBarImageTransparency = 1,
@@ -12085,9 +12569,7 @@ function Library:CreateWindow(WindowInfo)
         --// Container \\--
         Container = New("Frame", {
             AnchorPoint = Vector2.new(1, 0),
-            BackgroundColor3 = function()
-                return Library:GetBetterColor(Library.Scheme.BackgroundColor, 1)
-            end,
+            BackgroundTransparency = 1,
             ClipsDescendants = true,
             Name = "Container",
             Position = UDim2.new(1, 0, 0, 49),
@@ -12460,6 +12942,19 @@ function Library:CreateWindow(WindowInfo)
                 Parent = TabButton,
             })
 
+            --// Selected look: soft accent tinted pill + thin accent stroke + indicator bar \\--
+            Library.Registry[TabButton].BackgroundColor3 = function()
+                return Library.Scheme.AccentColor:Lerp(Library.Scheme.MainColor, 0.86)
+            end
+            TabButton.BackgroundColor3 = Library.Registry[TabButton].BackgroundColor3()
+            New("UIStroke", {
+                Color = function()
+                    return Library.Scheme.AccentColor:Lerp(Library.Scheme.OutlineColor, 0.72)
+                end,
+                Transparency = 1,
+                Parent = TabButton,
+            })
+
             if TabButtonsStyle.Indicator then
                 TabIndicator = New("Frame", {
                     AnchorPoint = Vector2.new(1, 0.5),
@@ -12665,7 +13160,7 @@ function Library:CreateWindow(WindowInfo)
         }
 
         --// Glow behind the active tab button \\--
-        Tab.Glow = Library:AddShadow(TabButton, 14, 0, 1, "AccentColor")
+        Tab.Glow = nil -- sidebar glow was clipped by the sidebar scroll frame, selected tab uses a tinted pill instead
 
         --// Empty tab card (icon + title + description) \\--
         do
@@ -13964,6 +14459,10 @@ function Library:CreateWindow(WindowInfo)
                 CornerRadius = UDim.new(1, 0),
                 Parent = Button,
             })
+            Library.Registry[Button].BackgroundColor3 = function()
+                return Library.Scheme.AccentColor:Lerp(Library.Scheme.MainColor, 0.86)
+            end
+            Button.BackgroundColor3 = Library.Registry[Button].BackgroundColor3()
             New("UIPadding", {
                 PaddingLeft = UDim.new(0, 16),
                 PaddingRight = UDim.new(0, 16),
@@ -14067,9 +14566,7 @@ function Library:CreateWindow(WindowInfo)
                 Library.ActiveTab:Hide()
             end
 
-            TweenService:Create(TabButton, Library.TweenInfo, {
-                BackgroundTransparency = 0,
-            }):Play()
+            Library:SetTabButtonState(TabButton, true)
             if TabIndicator then
                 TweenService:Create(TabIndicator, Library.TweenInfo, {
                     BackgroundTransparency = 0,
@@ -14112,9 +14609,7 @@ function Library:CreateWindow(WindowInfo)
         end
 
         function Tab:Hide()
-            TweenService:Create(TabButton, Library.TweenInfo, {
-                BackgroundTransparency = 1,
-            }):Play()
+            Library:SetTabButtonState(TabButton, false)
 
             if TabIndicator then
                 TweenService:Create(TabIndicator, Library.TweenInfo, {
@@ -14285,6 +14780,19 @@ function Library:CreateWindow(WindowInfo)
             })
             New("UICorner", {
                 CornerRadius = UDim.new(0, TabButtonsStyle.CornerRadius),
+                Parent = TabButton,
+            })
+
+            --// Selected look: soft accent tinted pill + thin accent stroke + indicator bar \\--
+            Library.Registry[TabButton].BackgroundColor3 = function()
+                return Library.Scheme.AccentColor:Lerp(Library.Scheme.MainColor, 0.86)
+            end
+            TabButton.BackgroundColor3 = Library.Registry[TabButton].BackgroundColor3()
+            New("UIStroke", {
+                Color = function()
+                    return Library.Scheme.AccentColor:Lerp(Library.Scheme.OutlineColor, 0.72)
+                end,
+                Transparency = 1,
                 Parent = TabButton,
             })
 
@@ -14533,9 +15041,7 @@ function Library:CreateWindow(WindowInfo)
                 Library.ActiveTab:Hide()
             end
 
-            TweenService:Create(TabButton, Library.TweenInfo, {
-                BackgroundTransparency = 0,
-            }):Play()
+            Library:SetTabButtonState(TabButton, true)
 
             if TabIndicator then
                 TweenService:Create(TabIndicator, Library.TweenInfo, {
@@ -14569,9 +15075,7 @@ function Library:CreateWindow(WindowInfo)
         end
 
         function Tab:Hide()
-            TweenService:Create(TabButton, Library.TweenInfo, {
-                BackgroundTransparency = 1,
-            }):Play()
+            Library:SetTabButtonState(TabButton, false)
 
             if TabIndicator then
                 TweenService:Create(TabIndicator, Library.TweenInfo, {
