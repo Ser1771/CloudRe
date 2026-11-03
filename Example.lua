@@ -1,6 +1,4 @@
---// Cloudy Revolution 1.4 - example \\--
-local Library = loadstring(game:HttpGet("https://YOUR-HOST/CloudyRevolution.lua"))()
--- local Library = loadstring(readfile("CloudyRevolution.lua"))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/Ser1771/CloudRe/refs/heads/main/Library.lua"))()
 
 local Toggles, Options = Library.Toggles, Library.Options
 
@@ -17,14 +15,11 @@ local Window = Library:CreateWindow({
 local Tabs = {
     Aimbot   = Window:AddTab({ Name = "Aimbot",   Icon = "target" }),
     Visual   = Window:AddTab({ Name = "Visual",   Icon = "eye" }),
-    -- No groupboxes added -> shows the empty card (icon + title + description)
     Players  = Window:AddTab({ Name = "Players", Icon = "user", Description = "Character movement & physics" }),
     Settings = Window:AddTab({ Name = "Settings", Icon = "settings" }),
 }
 
---// ---------------------------------------------------------------
 --// AIMBOT: normal two-column layout
---// ---------------------------------------------------------------
 local Main = Tabs.Aimbot:AddGroupbox({ Name = "Aimbot", Side = "Left" })
 
 Main:AddToggle("SilentAim", {
@@ -75,17 +70,13 @@ end
 -- Targets:SetWarp(nil)  -- back to a normal, auto-height groupbox
 -- Targets:SetWarp(300)  -- change the height later
 
---// ---------------------------------------------------------------
---// VISUAL: PAGES (pill bar at the top) + SINGLE side groupbox + SIDE nested groupboxes
---// ---------------------------------------------------------------
+--// VISUAL: PAGES 
 local General = Tabs.Visual:AddPage("General")
 local Colors  = Tabs.Visual:AddPage("Colors")
 
--- Side = "Full" -> one groupbox spanning the whole page
 local ESP = General:AddGroupbox({ Name = "ESP", Side = "Full" })
 ESP:AddToggle("ESPEnabled", { Text = "Enabled", Description = "Draw boxes around players", Default = true })
 
--- Nested groupboxes placed side by side inside the full-width groupbox
 local Boxes = ESP:AddGroupbox({ Name = "Boxes", Side = "Left" })
 Boxes:AddToggle("Box2D", { Text = "2D Box", Default = true })
 Boxes:AddToggle("Corner", { Text = "Corner Box" })
@@ -101,9 +92,7 @@ Options.AccentPick:OnChanged(function(Color)
     Library:UpdateColorsUsingRegistry()
 end)
 
---// ---------------------------------------------------------------
 --// SETTINGS
---// ---------------------------------------------------------------
 local UI = Tabs.Settings:AddGroupbox({ Name = "Interface", Side = "Full" })
 UI:AddToggle("Glow", {
     Text = "Element glow",
@@ -113,6 +102,5 @@ UI:AddToggle("Glow", {
 })
 UI:AddButton({ Text = "Unload", Risky = true, DoubleClick = true, Func = function() Library:Unload() end })
 
--- Click the magnifier in the top bar to open the search panel:
---   Tab > Page > Groupbox > Element : Type
+
 Library:Notify({ Title = "Cloudy Revolution", Description = "Press the search button to find anything", Time = 5, Icon = "search" })
