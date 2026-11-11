@@ -11757,7 +11757,7 @@ function Library:CreateWindow(WindowInfo)
         })
         GlassGradient.Color = Library.Registry[GlassGradient].Color()
         New("UIStroke", {
-            ApplyStrokeMode = Enum.ApplyStrokeMode.Inner,
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Inset,
             Color = Color3.new(1, 1, 1),
             Thickness = 1,
             Transparency = 0.92,
