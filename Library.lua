@@ -11750,8 +11750,8 @@ function Library:CreateWindow(WindowInfo)
                 local Top = Library:GetBetterColor(Library.Scheme.BackgroundColor, 10):Lerp(Color3.fromRGB(128, 96, 255), 0.16)
                 local Bottom = Library:GetDarkerColor(Library.Scheme.BackgroundColor)
                 return ColorSequence.new({
-                    { Color = Top, Time = 0 },
-                    { Color = Bottom, Time = 1 },
+                    ColorSequenceKeypoint.new(0, Top),
+                    ColorSequenceKeypoint.new(1, Bottom),
                 })
             end,
         })
